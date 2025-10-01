@@ -1,11 +1,9 @@
 #ifndef _MOUSE_H
 #define _MOUSE_H
 
-#include <nan.h>
+#include <napi.h>
 
 #include "mouse_hook.h"
-
-using namespace v8;
 
 struct MouseEvent {
 	LONG x;
@@ -15,33 +13,32 @@ struct MouseEvent {
 
 const unsigned int BUFFER_SIZE = 10;
 
-class Mouse : public Nan::ObjectWrap {
+class Mouse : public Napi::ObjectWrap<Mouse> {
 	public:
-		static void Initialize(Local<Object> exports, Local<Value> module, Local<Context> context);
-		static Nan::Persistent<Function> constructor;
+		static Napi::Object Initialize(Napi::Env env, Napi::Object exports);
+		static Napi::FunctionReference constructor;
 
 		void Stop();
 		void HandleEvent(WPARAM, POINT);
 		void HandleSend();
+
+		explicit Mouse(const Napi::CallbackInfo& info);
+		~Mouse();
+
+		static Napi::Value New(const Napi::CallbackInfo& info);
+		Napi::Value Destroy(const Napi::CallbackInfo& info);
+		Napi::Value AddRef(const Napi::CallbackInfo& info);
+		Napi::Value RemoveRef(const Napi::CallbackInfo& info);
 
 	private:
 		MouseHookRef hook_ref;
 		MouseEvent* eventBuffer[BUFFER_SIZE];
 		unsigned int readIndex;
 		unsigned int writeIndex;
-		Nan::Callback* event_callback;
-		Nan::AsyncResource* async_resource;
+		Napi::FunctionReference event_callback;
 		uv_async_t* async;
 		uv_mutex_t lock;
 		volatile bool stopped;
-
-		explicit Mouse(Nan::Callback*);
-		~Mouse();
-
-		static NAN_METHOD(New);
-		static NAN_METHOD(Destroy);
-		static NAN_METHOD(AddRef);
-		static NAN_METHOD(RemoveRef);
 };
 
 #endif

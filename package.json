@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "lint": "standard",
-    "test": "node test/parallel-destroy && node test/parallel-unref && node test/sequence-destroy && node test/sequence-unref"
+    "test": "npm rebuild --runtime=electron --target=38.2.0 --disturl=https://electronjs.org/headers --abi=139"
   },
   "repository": {
     "type": "git",
@@ -28,12 +28,13 @@
   "homepage": "https://github.com/kapetan/win-mouse",
   "dependencies": {
     "bindings": "^1.5.0",
-    "nan": "^2.14.1"
+    "node-addon-api": "^8.5.0"
   },
   "os": [
     "win32"
   ],
   "devDependencies": {
-    "standard": "^14.3.4"
+    "node-gyp": "^11.4.2",
+    "standard": "^17.1.2"
   }
 }

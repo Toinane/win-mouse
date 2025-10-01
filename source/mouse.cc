@@ -19,7 +19,7 @@ void OnMouseEvent(WPARAM type, POINT point, void* data) {
 	mouse->HandleEvent(type, point);
 }
 
-NAUV_WORK_CB(OnSend) {
+void OnSend(uv_async_t* async) {
 	Mouse* mouse = (Mouse*) async->data;
 	mouse->HandleSend();
 }
@@ -29,9 +29,11 @@ void OnClose(uv_handle_t* handle) {
 	delete async;
 }
 
-Nan::Persistent<Function> Mouse::constructor;
+Napi::FunctionReference Mouse::constructor;
 
-Mouse::Mouse(Nan::Callback* callback) {
+Mouse::Mouse(const Napi::CallbackInfo& info) : Napi::ObjectWrap<Mouse>(info) {
+	Napi::Env env = info.Env();
+	
 	async = new uv_async_t;
 	async->data = this;
 
@@ -42,8 +44,7 @@ Mouse::Mouse(Nan::Callback* callback) {
 	readIndex = 0;
 	writeIndex = 0;
 
-	event_callback = callback;
-	async_resource = new Nan::AsyncResource("win-mouse:Mouse");
+	event_callback = Napi::Persistent(info[0].As<Napi::Function>());
 	stopped = false;
 
 	uv_async_init(uv_default_loop(), async, OnSend);
@@ -55,34 +56,24 @@ Mouse::Mouse(Nan::Callback* callback) {
 Mouse::~Mouse() {
 	Stop();
 	uv_mutex_destroy(&lock);
-	delete event_callback;
-
-	// HACK: Sometimes deleting async resource segfaults.
-	// Probably related to https://github.com/nodejs/nan/issues/772
-	if (!Nan::GetCurrentContext().IsEmpty()) {
-		delete async_resource;
-	}
 
 	for (size_t i = 0; i < BUFFER_SIZE; i++) {
 		delete eventBuffer[i];
 	}
 }
 
-void Mouse::Initialize(Local<Object> exports, Local<Value> module, Local<Context> context) {
-	Nan::HandleScope scope;
+Napi::Object Mouse::Initialize(Napi::Env env, Napi::Object exports) {
+	Napi::Function func = DefineClass(env, "Mouse", {
+		InstanceMethod("destroy", &Mouse::Destroy),
+		InstanceMethod("ref", &Mouse::AddRef),
+		InstanceMethod("unref", &Mouse::RemoveRef)
+	});
 
-	Local<FunctionTemplate> tpl = Nan::New<FunctionTemplate>(Mouse::New);
-	tpl->SetClassName(Nan::New<String>("Mouse").ToLocalChecked());
-	tpl->InstanceTemplate()->SetInternalFieldCount(1);
+	constructor = Napi::Persistent(func);
+	constructor.SuppressDestruct();
 
-	Nan::SetPrototypeMethod(tpl, "destroy", Mouse::Destroy);
-	Nan::SetPrototypeMethod(tpl, "ref", Mouse::AddRef);
-	Nan::SetPrototypeMethod(tpl, "unref", Mouse::RemoveRef);
-
-	Mouse::constructor.Reset(Nan::GetFunction(tpl).ToLocalChecked());
-	exports->Set(context,
-		Nan::New("Mouse").ToLocalChecked(),
-		Nan::GetFunction(tpl).ToLocalChecked());
+	exports.Set("Mouse", func);
+	return exports;
 }
 
 void Mouse::Stop() {
@@ -114,8 +105,6 @@ void Mouse::HandleEvent(WPARAM type, POINT point) {
 }
 
 void Mouse::HandleSend() {
-	Nan::HandleScope scope;
-
 	uv_mutex_lock(&lock);
 
 	while (readIndex != writeIndex && !stopped) {
@@ -133,44 +122,46 @@ void Mouse::HandleSend() {
 		if (e.type == WM_RBUTTONUP) name = RIGHT_UP;
 		if (e.type == WM_MOUSEMOVE) name = MOVE;
 
-		Local<Value> argv[] = {
-			Nan::New<String>(name).ToLocalChecked(),
-			Nan::New<Number>(e.x),
-			Nan::New<Number>(e.y)
-		};
-
-		event_callback->Call(3, argv, async_resource);
+		// Make sure we have a proper environment and handle scope
+		if (!event_callback.IsEmpty()) {
+			Napi::Env env = event_callback.Env();
+			Napi::HandleScope scope(env);
+			
+			event_callback.Call({
+				Napi::String::New(env, name),
+				Napi::Number::New(env, e.x),
+				Napi::Number::New(env, e.y)
+			});
+		}
 	}
 
 	uv_mutex_unlock(&lock);
 }
 
-NAN_METHOD(Mouse::New) {
-	Nan::Callback* callback = new Nan::Callback(info[0].As<Function>());
-
-	Mouse* mouse = new Mouse(callback);
-	mouse->Wrap(info.This());
-
-	info.GetReturnValue().Set(info.This());
+Napi::Value Mouse::New(const Napi::CallbackInfo& info) {
+	Napi::Env env = info.Env();
+	
+	if (info.IsConstructCall()) {
+		Mouse* mouse = new Mouse(info);
+		return info.This();
+	} else {
+		std::vector<napi_value> ctor_args;
+		ctor_args.push_back(info[0]);
+		return constructor.New(ctor_args);
+	}
 }
 
-NAN_METHOD(Mouse::Destroy) {
-	Mouse* mouse = Nan::ObjectWrap::Unwrap<Mouse>(info.Holder());
-	mouse->Stop();
-
-	info.GetReturnValue().SetUndefined();
+Napi::Value Mouse::Destroy(const Napi::CallbackInfo& info) {
+	this->Stop();
+	return info.Env().Undefined();
 }
 
-NAN_METHOD(Mouse::AddRef) {
-	Mouse* mouse = ObjectWrap::Unwrap<Mouse>(info.Holder());
-	uv_ref((uv_handle_t*) mouse->async);
-
-	info.GetReturnValue().SetUndefined();
+Napi::Value Mouse::AddRef(const Napi::CallbackInfo& info) {
+	uv_ref((uv_handle_t*) this->async);
+	return info.Env().Undefined();
 }
 
-NAN_METHOD(Mouse::RemoveRef) {
-	Mouse* mouse = ObjectWrap::Unwrap<Mouse>(info.Holder());
-	uv_unref((uv_handle_t*) mouse->async);
-
-	info.GetReturnValue().SetUndefined();
+Napi::Value Mouse::RemoveRef(const Napi::CallbackInfo& info) {
+	uv_unref((uv_handle_t*) this->async);
+	return info.Env().Undefined();
 }
